@@ -10,6 +10,8 @@ export class VercelApi implements ICredentialType {
 
 	displayName = 'Vercel API';
 
+	icon: Icon = { light: 'file:../icons/vercel.svg', dark: 'file:../icons/vercel.dark.svg' };
+
 	documentationUrl = 'https://vercel.com/docs/rest-api';
 
 	properties: INodeProperties[] = [

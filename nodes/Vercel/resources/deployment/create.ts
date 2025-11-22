@@ -30,7 +30,7 @@ export const deploymentCreateDescription: INodeProperties[] = [
 			show: showOnlyForDeploymentCreate,
 		},
 		description:
-			'HTML content to deploy. Can be HTML text or a file path (relative or absolute)',
+			'HTML content to deploy. Can be HTML text or a file path (relative or absolute).',
 	},
 	{
 		displayName: 'Deploy to Production',

@@ -31,7 +31,7 @@ export async function readHtmlContent(htmlInput: string): Promise<string> {
 			}
 			return content;
 		}
-	} catch (e: any) {
+	} catch (e: unknown) {
 		// 文件不存在或无法读取，当作 HTML 文本处理
 		if (e.code !== 'ENOENT' && !e.message.includes('HTML 文件为空')) {
 			// 其他错误也当作 HTML 文本

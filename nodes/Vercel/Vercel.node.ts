@@ -26,6 +26,7 @@ export class Vercel implements INodeType {
 		},
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
+		usableAsTool: true,
 		credentials: [
 			{
 				name: 'vercelApi',
@@ -70,10 +71,10 @@ export class Vercel implements INodeType {
 					const sanitizedName = sanitizeProjectName(projectName);
 
 					// 创建或获取项目
-					const projectId = await this.createOrGetProject.call(this, sanitizedName);
+					const projectId = await createOrGetProject(this, sanitizedName);
 
 					// 禁用项目保护
-					await this.disableProjectProtection.call(this, projectId);
+					await disableProjectProtection(this, projectId);
 
 					// 创建临时目录和文件
 					const tempDir = path.join(tmpdir(), `vercel-${Date.now()}-${i}`);
@@ -81,10 +82,10 @@ export class Vercel implements INodeType {
 
 					try {
 						// 创建项目文件
-						await this.createProjectFiles(tempDir, html);
+						await createProjectFiles(tempDir, html);
 
 						// 部署项目
-						const deployment = await this.deployProject.call(
+						const deployment = await deployProject(
 							this,
 							tempDir,
 							projectId,
@@ -111,9 +112,9 @@ export class Vercel implements INodeType {
 						// 清理临时目录
 						try {
 							await fs.rm(tempDir, { recursive: true, force: true });
-						} catch (e) {
-							// 忽略清理错误
-						}
+					} catch {
+						// 忽略清理错误
+					}
 					}
 				}
 			} catch (error) {
@@ -132,93 +133,94 @@ export class Vercel implements INodeType {
 
 		return [returnData];
 	}
+}
 
-	/**
-	 * 创建或获取项目
-	 */
-	async createOrGetProject(
-		this: IExecuteFunctions,
-		projectName: string,
-	): Promise<string> {
-		try {
-			// 尝试获取现有项目列表
-			const projects = await vercelApiRequest.call(this, 'GET', '/v9/projects');
-			const existing = projects.projects?.find((p: any) => p.name === projectName);
+/**
+ * 创建或获取项目
+ */
+async function createOrGetProject(
+	executeFunctions: IExecuteFunctions,
+	projectName: string,
+): Promise<string> {
+	try {
+		// 尝试获取现有项目列表
+		const projects = await vercelApiRequest.call(executeFunctions, 'GET', '/v9/projects');
+		const existing = projects.projects?.find((p: { name: string }) => p.name === projectName);
 
-			if (existing) {
-				return existing.id;
-			}
-		} catch (e) {
-			// 如果获取失败，继续创建新项目
+		if (existing) {
+			return existing.id;
 		}
+	} catch {
+		// 如果获取失败，继续创建新项目
+	}
 
-		// 创建新项目
-		const project = await vercelApiRequest.call(this, 'POST', '/v9/projects', {
-			name: projectName,
-			framework: null,
+	// 创建新项目
+	const project = await vercelApiRequest.call(executeFunctions, 'POST', '/v9/projects', {
+		name: projectName,
+		framework: null,
+	});
+
+	return project.id;
+}
+
+/**
+ * 禁用项目保护
+ */
+async function disableProjectProtection(
+	executeFunctions: IExecuteFunctions,
+	projectId: string,
+): Promise<void> {
+	try {
+		await vercelApiRequest.call(executeFunctions, 'PATCH', `/v9/projects/${projectId}`, {
+			ssoProtection: null,
+			passwordProtection: null,
 		});
-
-		return project.id;
+	} catch {
+		// 忽略错误
 	}
+}
 
-	/**
-	 * 禁用项目保护
-	 */
-	async disableProjectProtection(
-		this: IExecuteFunctions,
-		projectId: string,
-	): Promise<void> {
-		try {
-			await vercelApiRequest.call(this, 'PATCH', `/v9/projects/${projectId}`, {
-				ssoProtection: null,
-				passwordProtection: null,
-			});
-		} catch (e) {
-			// 忽略错误
-		}
-	}
+/**
+ * 创建项目文件
+ */
+async function createProjectFiles(projectDir: string, htmlContent: string): Promise<void> {
+	// 创建 index.html
+	await fs.writeFile(path.join(projectDir, 'index.html'), htmlContent, 'utf-8');
 
-	/**
-	 * 创建项目文件
-	 */
-	async createProjectFiles(projectDir: string, htmlContent: string): Promise<void> {
-		// 创建 index.html
-		await fs.writeFile(path.join(projectDir, 'index.html'), htmlContent, 'utf-8');
+	// 创建 package.json
+	const packageJson = {
+		name: path.basename(projectDir),
+		version: '1.0.0',
+		description: 'Static HTML site deployed to Vercel',
+		private: true,
+	};
+	await fs.writeFile(
+		path.join(projectDir, 'package.json'),
+		JSON.stringify(packageJson, null, 2),
+		'utf-8',
+	);
 
-		// 创建 package.json
-		const packageJson = {
-			name: path.basename(projectDir),
-			version: '1.0.0',
-			description: 'Static HTML site deployed to Vercel',
-			private: true,
-		};
-		await fs.writeFile(
-			path.join(projectDir, 'package.json'),
-			JSON.stringify(packageJson, null, 2),
-			'utf-8',
-		);
+	// 创建 vercel.json
+	const vercelConfig = {
+		version: 2,
+		routes: [{ src: '/(.*)', dest: '/$1' }],
+	};
+	await fs.writeFile(
+		path.join(projectDir, 'vercel.json'),
+		JSON.stringify(vercelConfig, null, 2),
+		'utf-8',
+	);
+}
 
-		// 创建 vercel.json
-		const vercelConfig = {
-			version: 2,
-			routes: [{ src: '/(.*)', dest: '/$1' }],
-		};
-		await fs.writeFile(
-			path.join(projectDir, 'vercel.json'),
-			JSON.stringify(vercelConfig, null, 2),
-			'utf-8',
-		);
-	}
-
-	/**
-	 * 部署项目
-	 */
-	async deployProject(
-		this: IExecuteFunctions,
-		projectDir: string,
-		projectId: string,
-		production: boolean,
-	): Promise<any> {
+/**
+ * 部署项目
+ */
+async function deployProject(
+	executeFunctions: IExecuteFunctions,
+	projectDir: string,
+	projectId: string,
+	production: boolean,
+): Promise<{ id: string; url?: string; [key: string]: unknown }> {
 		// 使用 Vercel API 创建部署
 		// 需要将文件打包成 tar.gz 格式
 		const archiver = await import('archiver');
@@ -255,7 +257,7 @@ export class Vercel implements INodeType {
 					});
 
 					// 获取凭证
-					const credentials = await this.getCredentials('vercelApi');
+					const credentials = await executeFunctions.getCredentials('vercelApi');
 					const teamId = credentials.teamId as string | undefined;
 
 					// 构建 URL
@@ -269,7 +271,7 @@ export class Vercel implements INodeType {
 
 					// 使用 n8n 的 HTTP 请求方法
 					const options = {
-						method: 'POST',
+						method: 'POST' as const,
 						url: `https://api.vercel.com${deployUrl}`,
 						headers: {
 							Authorization: `Bearer ${credentials.accessToken}`,
@@ -278,7 +280,7 @@ export class Vercel implements INodeType {
 						body: form,
 					};
 
-					const response = await this.helpers.httpRequest(options);
+					const response = await executeFunctions.helpers.httpRequest(options);
 
 					// 清理临时文件
 					try {
@@ -292,7 +294,7 @@ export class Vercel implements INodeType {
 					// 清理临时文件
 					try {
 						await fs.unlink(tarPath);
-					} catch (e) {
+					} catch {
 						// 忽略错误
 					}
 					reject(error);
@@ -307,6 +309,5 @@ export class Vercel implements INodeType {
 				reject(err);
 			});
 		});
-	}
 }
 
