@@ -59,7 +59,7 @@ export const deploymentCreateDescription: INodeProperties[] = [
 				description: 'Wait for deployment to complete (success or failure) before returning',
 			},
 		],
-		default: 'async',
+		default: 'blocking',
 		displayOptions: {
 			show: showOnlyForDeploymentCreate,
 		},
