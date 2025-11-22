@@ -63,6 +63,8 @@ export class Vercel implements INodeType {
 					const projectName = this.getNodeParameter('projectName', i) as string;
 					const htmlContent = this.getNodeParameter('htmlContent', i) as string;
 					const production = this.getNodeParameter('production', i, true) as boolean;
+					const deploymentMode = this.getNodeParameter('deploymentMode', i, 'async') as string;
+					const maxWaitTime = this.getNodeParameter('maxWaitTime', i, 300) as number;
 
 					// 读取 HTML 内容
 					const html = await readHtmlContent(htmlContent);
@@ -92,9 +94,19 @@ export class Vercel implements INodeType {
 							production,
 						);
 
+						// 如果是阻塞模式，等待部署完成
+						let finalDeployment = deployment;
+						if (deploymentMode === 'blocking') {
+							finalDeployment = await waitForDeployment(
+								this,
+								deployment.id as string,
+								maxWaitTime,
+							);
+						}
+
 						// 获取部署 URL
-						const deploymentUrl = deployment.url
-							? `https://${deployment.url}`
+						const deploymentUrl = finalDeployment.url
+							? `https://${finalDeployment.url}`
 							: `https://${sanitizedName}.vercel.app`;
 
 						returnData.push({
@@ -102,9 +114,11 @@ export class Vercel implements INodeType {
 								success: true,
 								projectId,
 								projectName: sanitizedName,
-								deploymentId: deployment.id,
+								deploymentId: finalDeployment.id as string,
 								url: deploymentUrl,
-								deployment,
+								status: (finalDeployment.readyState || deployment.readyState) as string,
+								mode: deploymentMode,
+								deployment: finalDeployment as Record<string, unknown>,
 							},
 							pairedItem: { item: i },
 						});
@@ -112,10 +126,26 @@ export class Vercel implements INodeType {
 						// 清理临时目录
 						try {
 							await fs.rm(tempDir, { recursive: true, force: true });
-					} catch {
-						// 忽略清理错误
+						} catch {
+							// 忽略清理错误
+						}
 					}
-					}
+				} else if (resource === 'deployment' && operation === 'get') {
+					const deploymentId = this.getNodeParameter('deploymentId', i) as string;
+
+					// 查询部署状态
+					const deployment = await getDeploymentStatus(this, deploymentId);
+
+					returnData.push({
+						json: {
+							success: true,
+							deploymentId: deployment.id as string,
+							url: deployment.url ? `https://${deployment.url}` : null,
+							status: deployment.readyState as string,
+							deployment: deployment as Record<string, unknown>,
+						},
+						pairedItem: { item: i },
+					});
 				}
 			} catch (error) {
 				if (this.continueOnFail()) {
@@ -200,16 +230,8 @@ async function createProjectFiles(projectDir: string, htmlContent: string): Prom
 		'utf-8',
 	);
 
-	// 创建 vercel.json
-	const vercelConfig = {
-		version: 2,
-		routes: [{ src: '/(.*)', dest: '/$1' }],
-	};
-	await fs.writeFile(
-		path.join(projectDir, 'vercel.json'),
-		JSON.stringify(vercelConfig, null, 2),
-		'utf-8',
-	);
+	// 纯静态 HTML 不需要 vercel.json，Vercel 会自动处理
+	// 不创建 vercel.json 文件
 }
 
 /**
@@ -232,24 +254,17 @@ async function deployProject(
 		path.join(projectDir, 'package.json'),
 		'utf-8',
 	);
-	const vercelJsonContent = await fs.readFile(
-		path.join(projectDir, 'vercel.json'),
-		'utf-8',
-	);
 
-	// 创建文件列表，每个文件包含路径和内容（base64 编码）
+	// 创建文件列表，每个文件包含路径和内容
+	// Vercel API 需要文件内容直接作为字符串，而不是 base64
 	const files = [
 		{
 			file: 'index.html',
-			data: Buffer.from(indexHtml).toString('base64'),
+			data: indexHtml,
 		},
 		{
 			file: 'package.json',
-			data: Buffer.from(packageJsonContent).toString('base64'),
-		},
-		{
-			file: 'vercel.json',
-			data: Buffer.from(vercelJsonContent).toString('base64'),
+			data: packageJsonContent,
 		},
 	];
 
@@ -280,5 +295,62 @@ async function deployProject(
 	);
 
 	return response;
+}
+
+/**
+ * 查询部署状态
+ */
+async function getDeploymentStatus(
+	executeFunctions: IExecuteFunctions,
+	deploymentId: string,
+): Promise<{ id: string; url?: string; readyState?: string; [key: string]: unknown }> {
+	const credentials = await executeFunctions.getCredentials('vercelApi');
+	const teamId = credentials.teamId as string | undefined;
+
+	// 构建 URL
+	let deployUrl = `/v13/deployments/${deploymentId}`;
+	if (teamId) {
+		deployUrl += `?teamId=${teamId}`;
+	}
+
+	// 使用 vercelApiRequest 发送请求
+	const response = await vercelApiRequest.call(executeFunctions, 'GET', deployUrl);
+
+	return response;
+}
+
+/**
+ * 等待部署完成（阻塞模式）
+ */
+async function waitForDeployment(
+	executeFunctions: IExecuteFunctions,
+	deploymentId: string,
+	maxWaitTime: number,
+): Promise<{ id: string; url?: string; readyState?: string; [key: string]: unknown }> {
+	const startTime = Date.now();
+	const pollInterval = 2000; // 每2秒查询一次
+
+	while (Date.now() - startTime < maxWaitTime * 1000) {
+		const deployment = await getDeploymentStatus(executeFunctions, deploymentId);
+
+		// 检查部署状态
+		// readyState 可能的值: QUEUED, BUILDING, READY, ERROR, CANCELED
+		if (deployment.readyState === 'READY') {
+			return deployment;
+		}
+
+		if (deployment.readyState === 'ERROR' || deployment.readyState === 'CANCELED') {
+			throw new Error(
+				`Deployment failed with status: ${deployment.readyState}. Deployment ID: ${deploymentId}`,
+			);
+		}
+
+		// 等待后继续轮询
+		await new Promise((resolve) => setTimeout(resolve, pollInterval));
+	}
+
+	// 超时，返回当前状态
+	const deployment = await getDeploymentStatus(executeFunctions, deploymentId);
+	return deployment;
 }
 

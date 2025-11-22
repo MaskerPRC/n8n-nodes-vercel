@@ -1,5 +1,6 @@
 import type { INodeProperties } from 'n8n-workflow';
 import { deploymentCreateDescription } from './create';
+import { deploymentGetDescription } from './get';
 
 export const deploymentDescription: INodeProperties[] = [
 	{
@@ -19,9 +20,16 @@ export const deploymentDescription: INodeProperties[] = [
 				description: 'Create a new deployment',
 				action: 'Create a deployment',
 			},
+			{
+				name: 'Get',
+				value: 'get',
+				description: 'Get deployment status',
+				action: 'Get deployment status',
+			},
 		],
 		default: 'create',
 	},
 	...deploymentCreateDescription,
+	...deploymentGetDescription,
 ];
 
