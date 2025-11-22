@@ -8,7 +8,7 @@ import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { deploymentDescription } from './resources/deployment';
 import { vercelApiRequest } from './shared/transport';
 import { sanitizeProjectName, readHtmlContent } from './shared/utils';
-import { promises as fs, createWriteStream } from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 
@@ -214,6 +214,8 @@ async function createProjectFiles(projectDir: string, htmlContent: string): Prom
 
 /**
  * 部署项目
+ * 使用 Vercel API v13/deployments 端点
+ * 文件需要以 base64 编码的 JSON 格式发送
  */
 async function deployProject(
 	executeFunctions: IExecuteFunctions,
@@ -221,93 +223,62 @@ async function deployProject(
 	projectId: string,
 	production: boolean,
 ): Promise<{ id: string; url?: string; [key: string]: unknown }> {
-		// 使用 Vercel API 创建部署
-		// 需要将文件打包成 tar.gz 格式
-		const archiver = await import('archiver');
-		const FormData = (await import('form-data')).default;
+	const credentials = await executeFunctions.getCredentials('vercelApi');
+	const teamId = credentials.teamId as string | undefined;
 
-		// 创建 tar.gz 文件
-		const tarPath = path.join(tmpdir(), `vercel-deploy-${Date.now()}.tar.gz`);
+	// 读取所有文件内容
+	const indexHtml = await fs.readFile(path.join(projectDir, 'index.html'), 'utf-8');
+	const packageJsonContent = await fs.readFile(
+		path.join(projectDir, 'package.json'),
+		'utf-8',
+	);
+	const vercelJsonContent = await fs.readFile(
+		path.join(projectDir, 'vercel.json'),
+		'utf-8',
+	);
 
-		return new Promise((resolve, reject) => {
-			const writeStream = createWriteStream(tarPath);
-			const archive = archiver.default('tar', {
-				gzip: true,
-			});
+	// 创建文件列表，每个文件包含路径和内容（base64 编码）
+	const files = [
+		{
+			file: 'index.html',
+			data: Buffer.from(indexHtml).toString('base64'),
+		},
+		{
+			file: 'package.json',
+			data: Buffer.from(packageJsonContent).toString('base64'),
+		},
+		{
+			file: 'vercel.json',
+			data: Buffer.from(vercelJsonContent).toString('base64'),
+		},
+	];
 
-			archive.pipe(writeStream);
+	// 构建请求体
+	const requestBody: any = {
+		name: path.basename(projectDir),
+		files: files,
+		projectSettings: {
+			framework: null,
+		},
+	};
 
-			// 添加文件到归档
-			archive.file(path.join(projectDir, 'index.html'), { name: 'index.html' });
-			archive.file(path.join(projectDir, 'package.json'), { name: 'package.json' });
-			archive.file(path.join(projectDir, 'vercel.json'), { name: 'vercel.json' });
+	// 构建 URL
+	let deployUrl = `/v13/deployments?projectId=${projectId}`;
+	if (teamId) {
+		deployUrl += `&teamId=${teamId}`;
+	}
+	if (production) {
+		deployUrl += '&target=production';
+	}
 
-			archive.finalize();
+	// 使用 vercelApiRequest 发送请求
+	const response = await vercelApiRequest.call(
+		executeFunctions,
+		'POST',
+		deployUrl,
+		requestBody,
+	);
 
-			writeStream.on('close', async () => {
-				try {
-					// 读取 tar.gz 文件
-					const tarFile = await fs.readFile(tarPath);
-
-					// 创建 FormData
-					const form = new FormData();
-					form.append('files', tarFile, {
-						filename: 'project.tar.gz',
-						contentType: 'application/gzip',
-					});
-
-					// 获取凭证
-					const credentials = await executeFunctions.getCredentials('vercelApi');
-					const teamId = credentials.teamId as string | undefined;
-
-					// 构建 URL
-					let deployUrl = `/v13/deployments?projectId=${projectId}`;
-					if (teamId) {
-						deployUrl += `&teamId=${teamId}`;
-					}
-					if (production) {
-						deployUrl += '&target=production';
-					}
-
-					// 使用 n8n 的 HTTP 请求方法
-					const options = {
-						method: 'POST' as const,
-						url: `https://api.vercel.com${deployUrl}`,
-						headers: {
-							Authorization: `Bearer ${credentials.accessToken}`,
-							...form.getHeaders(),
-						},
-						body: form,
-					};
-
-					const response = await executeFunctions.helpers.httpRequest(options);
-
-					// 清理临时文件
-					try {
-						await fs.unlink(tarPath);
-					} catch (e) {
-						// 忽略错误
-					}
-
-					resolve(response);
-				} catch (error) {
-					// 清理临时文件
-					try {
-						await fs.unlink(tarPath);
-					} catch {
-						// 忽略错误
-					}
-					reject(error);
-				}
-			});
-
-			archive.on('error', (err: Error) => {
-				reject(err);
-			});
-
-			writeStream.on('error', (err: Error) => {
-				reject(err);
-			});
-		});
+	return response;
 }
 
