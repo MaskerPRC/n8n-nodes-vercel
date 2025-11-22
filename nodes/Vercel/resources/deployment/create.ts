@@ -10,12 +10,13 @@ export const deploymentCreateDescription: INodeProperties[] = [
 		displayName: 'Project Name',
 		name: 'projectName',
 		type: 'string',
-		required: true,
+		required: false,
 		default: '',
 		displayOptions: {
 			show: showOnlyForDeploymentCreate,
 		},
-		description: 'The name of the Vercel project',
+		description:
+			'The name of the Vercel project. If not provided, a new project will be created with name "n8n-{timestamp}"',
 	},
 	{
 		displayName: 'HTML Content',
@@ -77,6 +78,17 @@ export const deploymentCreateDescription: INodeProperties[] = [
 			},
 		},
 		description: 'Maximum time to wait for deployment completion (only for blocking mode)',
+	},
+	{
+		displayName: 'Disable Project Protection',
+		name: 'disableProtection',
+		type: 'boolean',
+		default: true,
+		displayOptions: {
+			show: showOnlyForDeploymentCreate,
+		},
+		description:
+			'Whether to disable project protection (SSO and password protection) after deployment',
 	},
 ];
 

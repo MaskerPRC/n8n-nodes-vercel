@@ -60,23 +60,23 @@ export class Vercel implements INodeType {
 		for (let i = 0; i < items.length; i++) {
 			try {
 				if (resource === 'deployment' && operation === 'create') {
-					const projectName = this.getNodeParameter('projectName', i) as string;
+					const projectName = this.getNodeParameter('projectName', i, '') as string;
 					const htmlContent = this.getNodeParameter('htmlContent', i) as string;
 					const production = this.getNodeParameter('production', i, true) as boolean;
 					const deploymentMode = this.getNodeParameter('deploymentMode', i, 'async') as string;
 					const maxWaitTime = this.getNodeParameter('maxWaitTime', i, 300) as number;
+					const disableProtection = this.getNodeParameter('disableProtection', i, true) as boolean;
 
 					// 读取 HTML 内容
 					const html = await readHtmlContent(htmlContent);
 
-					// 清理项目名称
-					const sanitizedName = sanitizeProjectName(projectName);
+					// 确定项目名称：如果提供了就使用，否则使用 n8n-{时间戳}
+					const finalProjectName = projectName
+						? sanitizeProjectName(projectName)
+						: `n8n-${Date.now()}`;
 
 					// 创建或获取项目
-					const projectId = await createOrGetProject(this, sanitizedName);
-
-					// 禁用项目保护
-					await disableProjectProtection(this, projectId);
+					const projectId = await createOrGetProject(this, finalProjectName);
 
 					// 创建临时目录和文件
 					const tempDir = path.join(tmpdir(), `vercel-${Date.now()}-${i}`);
@@ -92,6 +92,7 @@ export class Vercel implements INodeType {
 							tempDir,
 							projectId,
 							production,
+							finalProjectName,
 						);
 
 						// 如果是阻塞模式，等待部署完成（成功或失败）
@@ -113,14 +114,23 @@ export class Vercel implements INodeType {
 						const deploymentUrl = finalDeployment.url
 							? `https://${finalDeployment.url}`
 							: deploymentStatus === 'READY'
-								? `https://${sanitizedName}.vercel.app`
+								? `https://${finalProjectName}.vercel.app`
 								: null;
+
+						// 从部署响应中获取实际的 projectId（部署返回的 projectId 更准确）
+						const actualProjectId =
+							(finalDeployment as { projectId?: string }).projectId || projectId;
+
+						// 如果启用了禁用保护选项，则禁用项目保护
+						if (disableProtection) {
+							await disableProjectProtection(this, actualProjectId);
+						}
 
 						returnData.push({
 							json: {
 								success: isSuccess,
-								projectId,
-								projectName: sanitizedName,
+								projectId: actualProjectId,
+								projectName: finalProjectName,
 								deploymentId: finalDeployment.id as string,
 								url: deploymentUrl,
 								status: deploymentStatus,
@@ -203,19 +213,54 @@ async function createOrGetProject(
 
 /**
  * 禁用项目保护
+ * 重试机制：如果第一次失败，等待后重试一次
  */
 async function disableProjectProtection(
 	executeFunctions: IExecuteFunctions,
 	projectId: string,
 ): Promise<void> {
-	try {
-		await vercelApiRequest.call(executeFunctions, 'PATCH', `/v9/projects/${projectId}`, {
-			ssoProtection: null,
-			passwordProtection: null,
-		});
-	} catch {
-		// 忽略错误
+	const maxRetries = 2;
+
+	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		try {
+			await vercelApiRequest.call(executeFunctions, 'PATCH', `/v9/projects/${projectId}`, {
+				ssoProtection: null,
+				passwordProtection: null,
+			});
+
+			// 验证是否成功（等待一小段时间后检查）
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			const verify = await vercelApiRequest.call(
+				executeFunctions,
+				'GET',
+				`/v9/projects/${projectId}`,
+			);
+
+			if (verify && typeof verify === 'object') {
+				const projectData = verify as { ssoProtection?: unknown; passwordProtection?: unknown };
+				const isDisabled =
+					!projectData.ssoProtection && !projectData.passwordProtection;
+				if (isDisabled) {
+					// 成功禁用
+					return;
+				}
+			}
+
+			// 如果验证失败且不是最后一次尝试，继续重试
+			if (attempt < maxRetries) {
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+				continue;
+			}
+		} catch (error) {
+			// 如果不是最后一次尝试，等待后重试
+			if (attempt < maxRetries) {
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+			}
+		}
 	}
+
+	// 所有重试都失败，但不抛出错误（因为这不是关键操作）
+	// 部署仍然可以继续，只是保护可能未禁用
 }
 
 /**
@@ -252,6 +297,7 @@ async function deployProject(
 	projectDir: string,
 	projectId: string,
 	production: boolean,
+	projectName: string,
 ): Promise<{ id: string; url?: string; [key: string]: unknown }> {
 	const credentials = await executeFunctions.getCredentials('vercelApi');
 	const teamId = credentials.teamId as string | undefined;
@@ -277,8 +323,9 @@ async function deployProject(
 	];
 
 	// 构建请求体
-	const requestBody: any = {
-		name: path.basename(projectDir),
+	// name 字段是必需的，使用项目名称
+	const requestBody = {
+		name: projectName,
 		files: files,
 		projectSettings: {
 			framework: null,
