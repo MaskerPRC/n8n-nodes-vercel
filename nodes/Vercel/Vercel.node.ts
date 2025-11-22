@@ -94,7 +94,7 @@ export class Vercel implements INodeType {
 							production,
 						);
 
-						// 如果是阻塞模式，等待部署完成
+						// 如果是阻塞模式，等待部署完成（成功或失败）
 						let finalDeployment = deployment;
 						if (deploymentMode === 'blocking') {
 							finalDeployment = await waitForDeployment(
@@ -104,20 +104,28 @@ export class Vercel implements INodeType {
 							);
 						}
 
+						// 获取部署状态
+						const deploymentStatus = (finalDeployment.readyState || deployment.readyState) as string;
+						const isSuccess = deploymentStatus === 'READY';
+						const errorMessage = (finalDeployment as { errorMessage?: string }).errorMessage;
+
 						// 获取部署 URL
 						const deploymentUrl = finalDeployment.url
 							? `https://${finalDeployment.url}`
-							: `https://${sanitizedName}.vercel.app`;
+							: deploymentStatus === 'READY'
+								? `https://${sanitizedName}.vercel.app`
+								: null;
 
 						returnData.push({
 							json: {
-								success: true,
+								success: isSuccess,
 								projectId,
 								projectName: sanitizedName,
 								deploymentId: finalDeployment.id as string,
 								url: deploymentUrl,
-								status: (finalDeployment.readyState || deployment.readyState) as string,
+								status: deploymentStatus,
 								mode: deploymentMode,
+								...(errorMessage && { errorMessage }),
 								deployment: finalDeployment as Record<string, unknown>,
 							},
 							pairedItem: { item: i },
@@ -321,30 +329,39 @@ async function getDeploymentStatus(
 
 /**
  * 等待部署完成（阻塞模式）
+ * 在构建完成（成功或失败）后才返回
  */
 async function waitForDeployment(
 	executeFunctions: IExecuteFunctions,
 	deploymentId: string,
 	maxWaitTime: number,
-): Promise<{ id: string; url?: string; readyState?: string; [key: string]: unknown }> {
+): Promise<{ id: string; url?: string; readyState?: string; errorMessage?: string; [key: string]: unknown }> {
 	const startTime = Date.now();
 	const pollInterval = 2000; // 每2秒查询一次
 
 	while (Date.now() - startTime < maxWaitTime * 1000) {
 		const deployment = await getDeploymentStatus(executeFunctions, deploymentId);
+		const readyState = deployment.readyState as string;
 
 		// 检查部署状态
 		// readyState 可能的值: QUEUED, BUILDING, READY, ERROR, CANCELED
-		if (deployment.readyState === 'READY') {
+		if (readyState === 'READY') {
+			// 部署成功，返回结果
 			return deployment;
 		}
 
-		if (deployment.readyState === 'ERROR' || deployment.readyState === 'CANCELED') {
-			throw new Error(
-				`Deployment failed with status: ${deployment.readyState}. Deployment ID: ${deploymentId}`,
-			);
+		if (readyState === 'ERROR' || readyState === 'CANCELED') {
+			// 部署失败，返回错误信息（不抛出异常，让调用者处理）
+			const errorMessage = (deployment as { errorMessage?: string }).errorMessage || 
+				`Deployment failed with status: ${readyState}`;
+			return {
+				...deployment,
+				readyState,
+				errorMessage,
+			};
 		}
 
+		// QUEUED 或 BUILDING 状态，继续等待
 		// 等待后继续轮询
 		await new Promise((resolve) => setTimeout(resolve, pollInterval));
 	}

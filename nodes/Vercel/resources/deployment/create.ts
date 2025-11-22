@@ -42,5 +42,41 @@ export const deploymentCreateDescription: INodeProperties[] = [
 		},
 		description: 'Whether to deploy to production environment',
 	},
+	{
+		displayName: 'Deployment Mode',
+		name: 'deploymentMode',
+		type: 'options',
+		options: [
+			{
+				name: 'Async (Return Immediately)',
+				value: 'async',
+				description: 'Return deployment ID immediately, check status later',
+			},
+			{
+				name: 'Blocking (Wait for Completion)',
+				value: 'blocking',
+				description: 'Wait for deployment to complete (success or failure) before returning',
+			},
+		],
+		default: 'async',
+		displayOptions: {
+			show: showOnlyForDeploymentCreate,
+		},
+		description: 'Whether to wait for deployment completion or return immediately',
+	},
+	{
+		displayName: 'Max Wait Time (seconds)',
+		name: 'maxWaitTime',
+		type: 'number',
+		default: 300,
+		displayOptions: {
+			show: {
+				operation: ['create'],
+				resource: ['deployment'],
+				deploymentMode: ['blocking'],
+			},
+		},
+		description: 'Maximum time to wait for deployment completion (only for blocking mode)',
+	},
 ];
 
