@@ -1,0 +1,19 @@
+{
+	"node": "n8n-nodes-vercel",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Development", "Deployment"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://vercel.com/docs/rest-api"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://vercel.com/docs"
+			}
+		]
+	}
+}
+
