@@ -1,9 +1,9 @@
 {
 	"name": "n8n-nodes-vercel",
-	"version": "0.6.1",
+	"version": "0.6.2",
 	"description": "n8n community node for deploying static HTML sites to Vercel",
 	"license": "MIT",
-	"homepage": "https://github.com/n8n-io/n8n-nodes-starter",
+	"homepage": "https://github.com/MaskerPRC/n8n-nodes-vercel",
 	"keywords": [
 		"n8n-community-node-package",
 		"n8n",
@@ -17,7 +17,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/n8n-io/n8n-nodes-starter.git"
+		"url": "https://github.com/MaskerPRC/n8n-nodes-vercel.git"
 	},
 	"scripts": {
 		"build": "n8n-node build",
@@ -35,13 +35,9 @@
 		"n8nNodesApiVersion": 1,
 		"strict": true,
 		"credentials": [
-			"dist/credentials/GithubIssuesApi.credentials.js",
-			"dist/credentials/GithubIssuesOAuth2Api.credentials.js",
 			"dist/credentials/VercelApi.credentials.js"
 		],
 		"nodes": [
-			"dist/nodes/GithubIssues/GithubIssues.node.js",
-			"dist/nodes/Example/Example.node.js",
 			"dist/nodes/Vercel/Vercel.node.js"
 		]
 	},
