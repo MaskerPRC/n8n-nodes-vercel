@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-vercel",
-	"version": "0.6.2",
+	"version": "0.7.0",
 	"description": "n8n community node for deploying static HTML sites to Vercel",
 	"license": "MIT",
 	"homepage": "https://github.com/MaskerPRC/n8n-nodes-vercel",
